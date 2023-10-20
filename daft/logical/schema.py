@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING, Iterator
 
+from daft.daft import CsvParseOptions
 from daft.daft import PyField as _PyField
 from daft.daft import PySchema as _PySchema
 from daft.daft import read_csv_schema as _read_csv_schema
@@ -159,16 +160,14 @@ class Schema:
     def from_csv(
         cls,
         path: str,
-        has_header: bool | None = None,
-        delimiter: str | None = None,
+        parse_options: CsvParseOptions | None = None,
         io_config: IOConfig | None = None,
         multithreaded_io: bool | None = None,
     ) -> Schema:
         return Schema._from_pyschema(
             _read_csv_schema(
                 uri=path,
-                has_header=has_header,
-                delimiter=delimiter,
+                parse_options=parse_options,
                 io_config=io_config,
                 multithreaded_io=multithreaded_io,
             )
