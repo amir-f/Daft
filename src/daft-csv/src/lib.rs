@@ -1,5 +1,7 @@
 #![feature(async_closure)]
 #![feature(let_chains)]
+#![feature(trait_alias)]
+#![feature(trait_upcasting)]
 use common_error::DaftError;
 use snafu::Snafu;
 
@@ -10,9 +12,11 @@ pub mod options;
 pub mod python;
 pub mod read;
 
+pub use metadata::read_csv_schema_bulk;
 pub use options::{CsvConvertOptions, CsvParseOptions, CsvReadOptions};
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+pub use read::read_csv_bulk;
 
 #[derive(Debug, Snafu)]
 pub enum Error {

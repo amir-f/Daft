@@ -4,6 +4,9 @@ use std::{ops::Deref, sync::Mutex};
 use arrow2::io::parquet::read::schema::infer_schema_with_options;
 use common_error::DaftResult;
 use daft_core::schema::{Schema, SchemaRef};
+use daft_csv::{
+    read_csv_bulk, read_csv_schema_bulk, CsvConvertOptions, CsvParseOptions, CsvReadOptions,
+};
 use daft_dsl::Expr;
 use daft_parquet::read::{read_parquet_metadata_bulk, ParquetSchemaInferenceOptions};
 use daft_table::Table;
@@ -18,6 +21,11 @@ use daft_io::{IOConfig, IOStatsRef};
 #[derive(Clone)]
 enum FormatParams {
     Parquet(ParquetSchemaInferenceOptions),
+    Csv(
+        Option<CsvParseOptions>,
+        Option<CsvReadOptions>,
+        Option<Vec<String>>,
+    ),
 }
 
 #[derive(Clone)]
@@ -88,6 +96,32 @@ impl MicroPartition {
                             8,
                             params.multithreaded_io,
                             parquet_schema_inference,
+                        )
+                        .context(DaftCoreComputeSnafu)?
+                    }
+                    FormatParams::Csv(parse_options, read_options, column_names) => {
+                        let io_client = daft_io::get_io_client(
+                            params.multithreaded_io,
+                            params.io_config.clone(),
+                        )
+                        .unwrap();
+                        let uris = params.urls.iter().map(|s| s.as_str()).collect::<Vec<_>>();
+                        let convert_options = CsvConvertOptions::new_internal(
+                            params.limit,
+                            params.columns.clone(),
+                            column_names.clone(),
+                            Some(self.schema.clone()),
+                        );
+                        read_csv_bulk(
+                            uris.as_slice(),
+                            Some(convert_options),
+                            parse_options.clone(),
+                            read_options.clone(),
+                            io_client.clone(),
+                            io_stats,
+                            params.multithreaded_io,
+                            None,
+                            8usize,
                         )
                         .context(DaftCoreComputeSnafu)?
                     }
@@ -199,6 +233,60 @@ fn read_parquet_into_micropartition(
         Arc::new(daft_schema),
         TableState::Unloaded(params),
         folded_stats,
+    ))
+}
+
+fn read_csv_into_micropartition(
+    uris: &[&str],
+    parse_options: Option<CsvParseOptions>,
+    read_options: Option<CsvReadOptions>,
+    schema: Option<SchemaRef>,
+    column_names: Option<Vec<String>>,
+    io_config: Arc<IOConfig>,
+    io_stats: Option<IOStatsRef>,
+) -> DaftResult<MicroPartition> {
+    // thread in columns and limit
+    let schema = match schema {
+        Some(schema) => schema,
+        None => {
+            let runtime_handle = daft_io::get_runtime(true)?;
+            let io_client = daft_io::get_io_client(true, io_config.clone())?;
+            let owned_parse_options = parse_options.clone();
+            let schemas_and_stats = runtime_handle.block_on(async move {
+                read_csv_schema_bulk(
+                    uris,
+                    owned_parse_options,
+                    // Default to 1 MiB.
+                    Some(1024 * 1024),
+                    io_client,
+                    io_stats,
+                )
+                .await
+            })?;
+            let mut schemas = schemas_and_stats
+                .into_iter()
+                .map(|pair| pair.0)
+                .collect::<Vec<Schema>>();
+            debug_assert!(!schemas.is_empty());
+            Arc::new(std::mem::take(&mut schemas[0]))
+        }
+    };
+
+    let owned_urls = uris.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let params = DeferredLoadingParams {
+        format_params: FormatParams::Csv(parse_options, read_options, column_names),
+        urls: owned_urls,
+        io_config: io_config.clone(),
+        multithreaded_io: true,
+        filters: vec![],
+        limit: None,
+        columns: None,
+    };
+
+    Ok(MicroPartition::new(
+        schema,
+        TableState::Unloaded(params),
+        None,
     ))
 }
 
