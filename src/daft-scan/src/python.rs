@@ -14,9 +14,9 @@ pub mod pylib {
 
     use pyo3::pyclass;
 
-    use crate::ScanOperator;
     use crate::anonymous::AnonymousScanOperator;
     use crate::FileType;
+    use crate::ScanOperator;
     use crate::ScanOperatorRef;
 
     #[pyclass(module = "daft.daft", frozen)]
@@ -46,22 +46,19 @@ pub mod pylib {
         }
 
         #[staticmethod]
-        pub fn from_python(
-            py_scan: PythonScanOperator
-        ) -> PyResult<Self> {
-            let scan_op: ScanOperatorRef = Box::new(py_scan);
-            let (_,scan_op) = scan_op.filter(&col("11"))?;
+        pub fn from_python_abc(py_scan: PyObject) -> PyResult<Self> {
+            let scan_op: ScanOperatorRef =
+                Box::new(PythonScanOperatorBridge::from_python_abc(py_scan)?);
             Ok(ScanOperatorHandle { scan_op })
         }
     }
     #[pyclass(module = "daft.daft")]
-    #[derive(Debug, Clone)]
-    pub struct PythonScanOperator {
-        operator: PyObject
+    #[derive(Debug)]
+    pub(self) struct PythonScanOperatorBridge {
+        operator: PyObject,
     }
     #[pymethods]
-    impl PythonScanOperator {
-
+    impl PythonScanOperatorBridge {
         #[staticmethod]
         pub fn from_python_abc(abc: PyObject) -> PyResult<Self> {
             Ok(Self { operator: abc })
@@ -69,31 +66,34 @@ pub mod pylib {
 
         pub fn _filter(&self, py: Python, predicate: PyExpr) -> PyResult<(bool, Self)> {
             let _from_pyexpr = py
-                .import(pyo3::intern!(py, "daft.expr"))?
+                .import(pyo3::intern!(py, "daft.expressions"))?
                 .getattr(pyo3::intern!(py, "Expression"))?
                 .getattr(pyo3::intern!(py, "_from_pyexpr"))?;
             let expr = _from_pyexpr.call1((predicate,))?;
             let result = self.operator.call_method(py, "filter", (expr,), None)?;
             let (absorb, new_op) = result.extract::<(bool, PyObject)>(py)?;
-            Ok((
-                absorb,
-                Self {
-                    operator: new_op
-                }
-            ))
+            Ok((absorb, Self { operator: new_op }))
         }
     }
 
-    impl Display for PythonScanOperator {
+    impl Display for PythonScanOperatorBridge {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "{:#?}", self)
         }
     }
 
-    impl ScanOperator for PythonScanOperator {
-        fn filter(self: Box<Self>, predicate: &daft_dsl::Expr) -> common_error::DaftResult<(bool, ScanOperatorRef)> {
+    impl ScanOperator for PythonScanOperatorBridge {
+        fn filter(
+            self: Box<Self>,
+            predicate: &daft_dsl::Expr,
+        ) -> common_error::DaftResult<(bool, ScanOperatorRef)> {
             Python::with_gil(|py| {
-                let (can, new_op) = self._filter(py, PyExpr {expr: predicate.clone()})?;
+                let (can, new_op) = self._filter(
+                    py,
+                    PyExpr {
+                        expr: predicate.clone(),
+                    },
+                )?;
                 Ok((can, Box::new(new_op) as ScanOperatorRef))
             })
         }
@@ -103,7 +103,7 @@ pub mod pylib {
         fn num_partitions(&self) -> common_error::DaftResult<usize> {
             todo!()
         }
-        fn partitioning_keys(&self) -> &[daft_core::datatypes::Field] {
+        fn partitioning_keys(&self) -> &[crate::PartitionField] {
             todo!()
         }
         fn schema(&self) -> daft_core::schema::SchemaRef {
@@ -112,8 +112,11 @@ pub mod pylib {
         fn select(self: Box<Self>, columns: &[&str]) -> common_error::DaftResult<ScanOperatorRef> {
             todo!()
         }
-        fn to_scan_tasks(self: Box<Self>)
-                -> common_error::DaftResult<Box<dyn Iterator<Item = common_error::DaftResult<crate::ScanTask>>>> {
+        fn to_scan_tasks(
+            self: Box<Self>,
+        ) -> common_error::DaftResult<
+            Box<dyn Iterator<Item = common_error::DaftResult<crate::ScanTask>>>,
+        > {
             todo!()
         }
     }
@@ -121,7 +124,5 @@ pub mod pylib {
 
 pub fn register_modules(_py: Python, parent: &PyModule) -> PyResult<()> {
     parent.add_class::<pylib::ScanOperatorHandle>()?;
-    parent.add_class::<pylib::PythonScanOperator>()?;
-
     Ok(())
 }
