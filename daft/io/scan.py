@@ -3,7 +3,8 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass
 
-from daft.logical.schema import Schema
+from daft.expressions.expressions import Expression
+from daft.logical.schema import Field, Schema
 
 
 @dataclass(frozen=True)
@@ -13,14 +14,21 @@ class ScanTask:
     limit: int | None
 
 
+@dataclass(frozen=True)
+class PartitionField:
+    field: Field
+    source_field: Field
+    transform: Expression
+
+
 class ScanOperator(abc.ABC):
     @abc.abstractmethod
     def schema(self) -> Schema:
         raise NotImplementedError()
 
-    # @abc.abstractmethod
-    # def partitioning_keys(self) -> list[Field]:
-    #     raise NotImplementedError()
+    @abc.abstractmethod
+    def partitioning_keys(self) -> list[PartitionField]:
+        raise NotImplementedError()
 
     # @abc.abstractmethod
     # def num_partitions(self) -> int:
